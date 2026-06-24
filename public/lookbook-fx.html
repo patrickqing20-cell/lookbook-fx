@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Surveillance Lookbook Generator</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#111;color:#e0e0e0;font-family:-apple-system,BlinkMacSystemFont,'SF Pro',sans-serif;min-height:100vh}
+.app{display:grid;grid-template-columns:1fr 300px;height:100vh}
+.preview{display:flex;align-items:center;justify-content:center;background:#0a0a0a;position:relative;overflow:auto;padding:20px}
+canvas{max-width:100%;max-height:95vh;border-radius:4px;cursor:crosshair}
+.panel{background:#1a1a1a;border-left:1px solid #2a2a2a;padding:14px;overflow-y:auto;display:flex;flex-direction:column;gap:12px}
+.panel h2{font-size:10px;letter-spacing:3px;text-transform:uppercase;color:#555;padding-bottom:5px;border-bottom:1px solid #2a2a2a}
+.ubtn{width:100%;padding:10px;border:1px solid #333;border-radius:6px;background:#222;color:#ccc;font-size:12px;text-align:center;cursor:pointer;transition:all .15s}
+.ubtn:hover{border-color:#00ff00;color:#00ff00}
+.field{margin-bottom:8px}
+.field label{display:block;font-size:10px;color:#888;margin-bottom:3px;text-transform:uppercase;letter-spacing:1px}
+.field input,.field textarea{width:100%;padding:7px 8px;border:1px solid #333;border-radius:4px;background:#222;color:#e0e0e0;font-size:12px;font-family:monospace;outline:none}
+.field input:focus,.field textarea:focus{border-color:#00ff00}
+.field textarea{resize:vertical;min-height:36px}
+.export-row{display:flex;gap:6px;margin-top:auto}
+.ebtn{flex:1;padding:10px;border:1px solid #00ff00;border-radius:5px;background:#00ff0010;color:#00ff00;font-size:11px;text-align:center;cursor:pointer}
+.ebtn:hover{background:#00ff0025}
+.hint{font-size:9px;color:#555;font-family:monospace;line-height:1.4;margin-top:4px}
+.drop-overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:#0a0a0a;z-index:10;cursor:pointer;border:2px dashed #333;margin:16px;border-radius:8px}
+.drop-overlay:hover{border-color:#00ff00;background:#00ff0008}
+.drop-overlay.hidden{display:none}
+.drop-overlay .icon{font-size:36px;opacity:.4}
+.drop-overlay p{font-size:13px;color:#666}
+input[type=file]{display:none}
+.tpl-btn{padding:6px 4px;border:1px solid #2a2a2a;border-radius:4px;background:#1e1e1e;color:#888;font-size:10px;cursor:pointer;text-align:center;transition:all .15s}
+.tpl-btn:hover{border-color:#555;color:#fff}
+.tpl-btn.active{border-color:#00ff00;color:#00ff00;background:#00ff0010}
+.tpl-btn .sub{display:block;font-size:8px;color:#555;margin-top:1px}
+.style-grid{display:grid;gap:4px}
+.loading-overlay{position:absolute;inset:0;background:rgba(10,10,10,0.92);z-index:15;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+.loading-overlay.hidden{display:none}
+.loading-spinner{width:40px;height:40px;border:3px solid #333;border-top-color:#00ff00;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:13px;color:#00ff00;font-family:'Courier New',monospace;letter-spacing:2px}
+.color-row{display:flex;gap:5px}
+.color-dot{width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:all .12s}
+.color-dot:hover{transform:scale(1.2)}
+.color-dot.active{border-color:#fff}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="preview" id="preview">
+    <div class="drop-overlay" id="dropOverlay">
+      <div class="icon">📸</div>
+      <p>上传一张人物照片</p>
+      <p style="font-size:11px;color:#444">拖拽或点击 · JPG/PNG/WebP · 单人或多人</p>
+      <p id="modelStatus" style="font-size:10px;color:#ffaa00;margin-top:8px">⏳ 人脸检测模型加载中...</p>
+    </div>
+    <div class="loading-overlay hidden" id="loadingOverlay">
+      <div class="loading-spinner"></div>
+      <p class="loading-text" id="loadingText">正在分析人物...</p>
+    </div>
+    <canvas id="canvas"></canvas>
+  </div>
+  <div class="panel">
+    <h2>上传</h2>
+    <div class="ubtn" onclick="document.getElementById('fileInput').click()">📸 上传人物照片</div>
+    <input type="file" id="fileInput" accept="image/*">
+
+    <h2>人物信息</h2>
+    <div class="field"><label>Name</label><input type="text" id="personName" value="LIANA" oninput="render()"></div>
+    <div class="field"><label>ID</label><input type="text" id="personId" value="THEVINYLHOUSE" oninput="render()"></div>
+    <div class="field"><label>Project</label><input type="text" id="projectName" value="25HS" oninput="render()"></div>
+    <div class="field"><label>Match %</label><input type="text" id="matchPct" value="95" oninput="render()"></div>
+
+    <h2>服装标注</h2>
+    <div class="field"><label>TOP</label><input type="text" id="topLabel" value="PAPER CIGARETTE TEE" oninput="render()"></div>
+    <div class="field"><label>BOTTOM</label><input type="text" id="bottomLabel" value="CARPENTER DENIM SHORTS" oninput="render()"></div>
+    <div class="field"><label>ACC</label><input type="text" id="accLabel" value="" placeholder="配饰（可选）" oninput="render()"></div>
+
+    <h2>侧边文字</h2>
+    <div class="field"><label>竖排（每行一个词）</label>
+    <textarea id="sideWords" rows="3" oninput="render()">THIS
+BEST
+OUTFIT
+MY</textarea></div>
+
+    <h2>HUD 颜色</h2>
+    <div class="color-row">
+      <div class="color-dot active" data-color="#00ff00" style="background:#00ff00" onclick="setColor(this)"></div>
+      <div class="color-dot" data-color="#00ffff" style="background:#00ffff" onclick="setColor(this)"></div>
+      <div class="color-dot" data-color="#ff3366" style="background:#ff3366" onclick="setColor(this)"></div>
+      <div class="color-dot" data-color="#ffaa00" style="background:#ffaa00" onclick="setColor(this)"></div>
+      <div class="color-dot" data-color="#ffffff" style="background:#ffffff" onclick="setColor(this)"></div>
+    </div>
+
+    <h2>导出</h2>
+    <div class="export-row">
+      <div class="ebtn" onclick="exportPNG()">💾 导出 PNG</div>
+    </div>
+    <p class="hint">上传照片后自动检测人脸，生成追踪框风格效果图。</p>
+  </div>
+</div>
+
+<script src="/artifacts/face-models/face-api.min.js"></script>
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const dropOverlay = document.getElementById('dropOverlay');
+const fileInput = document.getElementById('fileInput');
+
+let sourceImg = null;
+let faceApiReady = false;
+let hudColor = '#00ff00';
+let allFaces = [];
+let faceBoxOrig = null;
+
+async function loadFaceModels() {
+  const MODEL_URL = '/artifacts/face-models/';
+  try {
+    await faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL);
+    faceApiReady = true;
+    document.getElementById('modelStatus').textContent = '✅ 人脸检测就绪 (SSD)';
+    document.getElementById('modelStatus').style.color = '#00ff00';
+  } catch(e) {
+    try {
+      await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+      faceApiReady = true;
+      document.getElementById('modelStatus').textContent = '✅ 人脸检测就绪 (Tiny)';
+      document.getElementById('modelStatus').style.color = '#00ff00';
+    } catch(e2) {
+      document.getElementById('modelStatus').textContent = '⚠️ 模型加载失败，使用备用定位';
+      document.getElementById('modelStatus').style.color = '#ff3366';
+    }
+  }
+}
+loadFaceModels();
+
+function setColor(el) {
+  document.querySelectorAll('.color-dot').forEach(d => d.classList.remove('active'));
+  el.classList.add('active');
+  hudColor = el.dataset.color;
+  render();
+}
+
+// Upload
+dropOverlay.addEventListener('click', () => fileInput.click());
+const prev = document.getElementById('preview');
+prev.addEventListener('dragover', e => { e.preventDefault(); dropOverlay.style.borderColor = '#00ff00'; });
+prev.addEventListener('dragleave', () => { dropOverlay.style.borderColor = '#333'; });
+prev.addEventListener('drop', e => { e.preventDefault(); if (e.dataTransfer.files[0]) loadImage(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', e => { if (e.target.files[0]) loadImage(e.target.files[0]); });
+
+function loadImage(file) {
+  const img = new Image();
+  img.onload = async () => {
+    sourceImg = img;
+    canvas.width = 1080; canvas.height = 1440;
+    dropOverlay.classList.add('hidden');
+    const loadingEl = document.getElementById('loadingOverlay');
+    const loadingText = document.getElementById('loadingText');
+    loadingEl.classList.remove('hidden');
+    loadingText.textContent = '正在检测人脸...';
+    await new Promise(r => setTimeout(r, 50));
+    try {
+      await detectFaces(img);
+      loadingText.textContent = '正在生成效果...';
+      await new Promise(r => setTimeout(r, 50));
+      render();
+    } catch(e) { console.warn('err:', e); try{render();}catch(e2){} }
+    finally { loadingEl.classList.add('hidden'); }
+  };
+  img.src = URL.createObjectURL(file);
+}
+
+async function detectFaces(img) {
+  allFaces = []; faceBoxOrig = null;
+  if (faceApiReady) {
+    try {
+      const tc = document.createElement('canvas');
+      tc.width = img.width; tc.height = img.height;
+      tc.getContext('2d').drawImage(img, 0, 0);
+      let dets;
+      if (faceapi.nets.ssdMobilenetv1.isLoaded)
+        dets = await faceapi.detectAllFaces(tc, new faceapi.SsdMobilenetv1Options({minConfidence:0.2}));
+      else
+        dets = await faceapi.detectAllFaces(tc, new faceapi.TinyFaceDetectorOptions({inputSize:512,scoreThreshold:0.2}));
+      dets.sort((a,b) => a.box.x - b.box.x);
+      for (const d of dets) allFaces.push({x:d.box.x, y:d.box.y, w:d.box.width, h:d.box.height});
+    } catch(e) { console.warn('detect:', e); }
+  }
+  if (allFaces.length === 0)
+    allFaces = [{x:img.width*0.35, y:img.height*0.08, w:img.width*0.2, h:img.width*0.2}];
+  faceBoxOrig = allFaces[0];
+}
+
+// ===== Utilities =====
+function drawRegionBW(ctx, img, sr, dr, bw) {
+  ctx.save();
+  ctx.beginPath(); ctx.rect(dr.x,dr.y,dr.w,dr.h); ctx.clip();
+  const sra=sr.w/sr.h, dra=dr.w/dr.h;
+  let sx=sr.x,sy=sr.y,sw=sr.w,sh=sr.h;
+  if(sra>dra){const nw=sr.h*dra;sx+=(sr.w-nw)/2;sw=nw;}else{const nh=sr.w/dra;sy+=(sr.h-nh)/2;sh=nh;}
+  ctx.drawImage(img,sx,sy,sw,sh,dr.x,dr.y,dr.w,dr.h);
+  ctx.restore();
+  // Only apply B&W when explicitly requested (bw=true)
+  if(bw){
+    const id=ctx.getImageData(dr.x,dr.y,dr.w,dr.h),d=id.data;
+    for(let i=0;i<d.length;i+=4){let g=d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114;g+=(Math.random()-0.5)*20;g=Math.max(0,Math.min(255,g));d[i]=g*0.95;d[i+1]=g;d[i+2]=g*0.9;}
+    ctx.putImageData(id,dr.x,dr.y);
+  }
+}
+function drawLFrame(ctx,x,y,w,h,L,color,lw) {
+  ctx.strokeStyle=color;ctx.lineWidth=lw||2;L=L||Math.min(w,h)*0.08;
+  ctx.beginPath();
+  ctx.moveTo(x,y+L);ctx.lineTo(x,y);ctx.lineTo(x+L,y);
+  ctx.moveTo(x+w-L,y);ctx.lineTo(x+w,y);ctx.lineTo(x+w,y+L);
+  ctx.moveTo(x+w,y+h-L);ctx.lineTo(x+w,y+h);ctx.lineTo(x+w-L,y+h);
+  ctx.moveTo(x+L,y+h);ctx.lineTo(x,y+h);ctx.lineTo(x,y+h-L);
+  ctx.stroke();
+}
+function drawScanlines(ctx,x,y,w,h,c,s){ctx.strokeStyle=c||'rgba(0,255,0,0.015)';ctx.lineWidth=1;for(let i=y;i<y+h;i+=(s||3)){ctx.beginPath();ctx.moveTo(x,i);ctx.lineTo(x+w,i);ctx.stroke();}}
+function mapFace(fb,img,W,H){
+  const ir=img.width/img.height,cr=W/H;let sx=0,sy=0,sw=img.width,sh=img.height;
+  if(ir>cr){sw=img.height*cr;sx=(img.width-sw)/2;}else{sh=img.width/cr;sy=(img.height-sh)/2;}
+  return{x:(fb.x-sx)*(W/sw),y:(fb.y-sy)*(H/sh),w:fb.w*(W/sw),h:fb.h*(H/sh)};
+}
+function drawFaceThumb(ctx,img,fb,dx,dy,sz){
+  const p=fb.w*0.8,cx=Math.max(0,fb.x+fb.w/2-p),cy=Math.max(0,fb.y+fb.h/2-p),cs=Math.min(p*2,img.width-cx,img.height-cy);
+  ctx.drawImage(img,cx,cy,cs,cs,dx,dy,sz,sz);
+  const id=ctx.getImageData(dx,dy,sz,sz),d=id.data;
+  for(let i=0;i<d.length;i+=4){const g=d[i]*0.3+d[i+1]*0.59+d[i+2]*0.11;d[i]=d[i+1]=d[i+2]=g;}
+  ctx.putImageData(id,dx,dy);
+}
+function drawBarcode(ctx,x,y,c){ctx.fillStyle=c;for(let i=0;i<30;i++){const bw=Math.random()>0.5?2:1;ctx.fillRect(x+i*4,y,bw,16);}ctx.font='10px "Courier New",monospace';ctx.fillText('0000350000400010',x,y+28);}
+function getInputs(){return{name:document.getElementById('personName').value||'UNKNOWN',id:document.getElementById('personId').value||'N/A',project:document.getElementById('projectName').value||'N/A',match:document.getElementById('matchPct').value||'95',top:document.getElementById('topLabel').value||'TOP',bottom:document.getElementById('bottomLabel').value||'BOTTOM',acc:document.getElementById('accLabel').value,sideWords:(document.getElementById('sideWords').value||'').split('\n').filter(w=>w.trim())};}
+function ts(){return new Date().toLocaleTimeString('en-GB');}
+function ds(){return new Date().toISOString().slice(0,10);}
+function getRegions(img,fb){const iw=img.width,ih=img.height,cx=fb.x+fb.w/2,cy=fb.y+fb.h/2;return{full:{x:0,y:0,w:iw,h:ih},face:{x:Math.max(0,cx-fb.w*1.2),y:Math.max(0,cy-fb.w*1.2),w:Math.min(iw,fb.w*2.4),h:Math.min(ih,fb.w*2.4)},upper:{x:Math.max(0,cx-iw*0.3),y:Math.max(0,fb.y-fb.h),w:Math.min(iw,iw*0.6),h:Math.min(ih,fb.h*6)},lower:{x:Math.max(0,cx-iw*0.35),y:Math.min(ih*0.5,fb.y+fb.h*4),w:Math.min(iw,iw*0.7),h:ih-Math.min(ih*0.5,fb.y+fb.h*4)},head:{x:Math.max(0,cx-fb.w*1.5),y:Math.max(0,fb.y-fb.h*0.6),w:Math.min(iw,fb.w*3),h:Math.min(ih,fb.h*4)}};}
+
+// ===== RENDER =====
+function render() {
+  if(!sourceImg||allFaces.length===0)return;
+  const W=1080,H=1440;canvas.width=W;canvas.height=H;
+  ctx.fillStyle='#0a0a0a';ctx.fillRect(0,0,W,H);
+  const c=hudColor,inp=getInputs(),reg=getRegions(sourceImg,faceBoxOrig);
+  renderClassic(W,H,c,inp,reg);
+}
+
+// ======================================================================
+// CLASSIC — 图1精确复刻: 单人时尚Lookbook
+// ======================================================================
+function renderClassic(W,H,c,inp,reg) {
+  drawRegionBW(ctx,sourceImg,reg.full,{x:0,y:0,w:W,h:H});
+  const vg=ctx.createRadialGradient(W/2,H/2,W*0.3,W/2,H/2,W*0.8);
+  vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,'rgba(0,0,0,0.4)');ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
+
+  const cf=mapFace(faceBoxOrig,sourceImg,W,H);
+  const fcx=cf.x+cf.w/2,fcy=cf.y+cf.h/2,faceOnRight=fcx>W*0.5;
+  // Person L-frame
+  const pw=W*0.38,ph=H*0.8;
+  const px=Math.max(W*0.02,Math.min(W*0.6,fcx-pw/2));
+  const py=Math.max(H*0.04,fcy-ph*0.18);
+  drawLFrame(ctx,px,py,pw,ph,Math.min(pw,ph)*0.06,c,2);
+  // Face L-frame
+  const pad=0.3;
+  const fBx=cf.x-cf.w*pad,fBy=cf.y-cf.h*pad,fBw=cf.w*(1+pad*2),fBh=cf.h*(1+pad*2);
+  drawLFrame(ctx,fBx,fBy,fBw,fBh,Math.min(fBw,fBh)*0.15,c,2);
+  // Body dashed boxes
+  const bodyX=Math.max(8,px+pw*0.05),bodyW=Math.min(pw*0.9,W-bodyX-8);
+  const topBY=py+ph*0.28,topBH=ph*0.25,botBY=py+ph*0.55,botBH=ph*0.3;
+  ctx.strokeStyle=c;ctx.setLineDash([6,4]);ctx.lineWidth=1.5;
+  ctx.strokeRect(bodyX,topBY,bodyW,topBH);ctx.strokeRect(bodyX,botBY,bodyW,botBH);ctx.setLineDash([]);
+
+  // Info card
+  const cardW=W*0.34,cardH=H*0.22;
+  let cardX=faceOnRight?W*0.03:W-cardW-W*0.03;
+  const cardY=Math.max(H*0.06,fBy);
+  if(!faceOnRight&&cardX<fBx+fBw+20)cardX=fBx+fBw+20;
+  if(faceOnRight&&cardX+cardW>fBx-20)cardX=fBx-cardW-20;
+  cardX=Math.max(8,Math.min(W-cardW-8,cardX));
+
+  // Name bar (green fill + black text)
+  ctx.fillStyle=c;ctx.font='bold 26px "Courier New",monospace';
+  const nw=ctx.measureText(inp.name).width+12;
+  ctx.fillRect(cardX,cardY-36,nw,28);ctx.fillStyle='#000';ctx.fillText(inp.name,cardX+6,cardY-14);
+  // Card border
+  ctx.strokeStyle=c;ctx.lineWidth=1.5;ctx.strokeRect(cardX,cardY,cardW,cardH);
+  // Face thumbnail
+  const thumbSz=Math.min(cardH*0.55,cardW*0.4);
+  drawFaceThumb(ctx,sourceImg,faceBoxOrig,cardX+10,cardY+10,thumbSz);
+  drawLFrame(ctx,cardX+10,cardY+10,thumbSz,thumbSz,thumbSz*0.1,c,1);
+  // Card text
+  ctx.fillStyle=c;ctx.font='16px "Courier New",monospace';
+  const tx=cardX+12,ty=cardY+cardH*0.55;
+  ctx.fillText(`ID: ${inp.id}`,tx,ty);ctx.fillText(`PROJECT: ${inp.project}`,tx,ty+22);
+  // Progress bar
+  ctx.font='12px "Courier New",monospace';ctx.fillText('UNTIL THE RELEASE DATE',tx,ty+44);
+  const pW=cardW*0.5;
+  ctx.fillStyle='#1a3aff';ctx.fillRect(tx,ty+50,pW*0.2,12);
+  ctx.fillStyle='#111';ctx.fillRect(tx+pW*0.2,ty+50,pW*0.8,12);
+  ctx.fillStyle=c;ctx.font='14px "Courier New",monospace';ctx.fillText('20%',tx+pW+8,ty+61);
+
+  // Connection line
+  ctx.strokeStyle=c;ctx.lineWidth=1.5;ctx.beginPath();
+  if(faceOnRight){ctx.moveTo(fBx,fBy+fBh*0.3);ctx.lineTo(cardX+cardW,cardY+cardH*0.3);}
+  else{ctx.moveTo(fBx+fBw,fBy+fBh*0.3);ctx.lineTo(cardX,cardY+cardH*0.3);}
+  ctx.stroke();
+
+  // Clothing labels
+  ctx.font='bold 18px "Courier New",monospace';
+  const lx=cardX,ly=cardY+cardH+H*0.05;
+  const t1=`TOP : ${inp.top}`,tw1=ctx.measureText(t1).width+14;
+  ctx.fillStyle=c;ctx.fillRect(lx,ly-16,tw1,24);ctx.fillStyle='#000';ctx.fillText(t1,lx+7,ly);
+  ctx.strokeStyle=c;ctx.setLineDash([4,4]);ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(bodyX+bodyW/2,topBY+topBH/2);ctx.lineTo(lx+tw1/2,ly-16);ctx.stroke();ctx.setLineDash([]);
+  const ly2=ly+30,t2=`BOTTOM: ${inp.bottom}`,tw2=ctx.measureText(t2).width+14;
+  ctx.fillStyle=c;ctx.fillRect(lx,ly2-16,tw2,24);ctx.fillStyle='#000';ctx.fillText(t2,lx+7,ly2);
+  ctx.strokeStyle=c;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(bodyX+bodyW/2,botBY+botBH/2);ctx.lineTo(lx+tw2/2,ly2-16);ctx.stroke();ctx.setLineDash([]);
+  if(inp.acc){const ly3=ly2+30,t3=`ACC : ${inp.acc}`,tw3=ctx.measureText(t3).width+14;ctx.fillStyle=c;ctx.fillRect(lx,ly3-16,tw3,24);ctx.fillStyle='#000';ctx.fillText(t3,lx+7,ly3);}
+
+  // Left side vertical text
+  if(inp.sideWords.length>0){ctx.save();ctx.fillStyle=c;ctx.font='bold 16px "Courier New",monospace';ctx.textAlign='center';
+  const sx=px-28,ws=ph/(inp.sideWords.length+1);
+  inp.sideWords.forEach((w,i)=>{ctx.save();ctx.translate(sx,py+ws*(i+1));ctx.rotate(-Math.PI/2);ctx.fillText(w.trim().toUpperCase(),0,0);ctx.restore();});
+  ctx.restore();}
+
+  // Top-left date, top-right battery
+  ctx.fillStyle=c;ctx.font='18px "Courier New",monospace';ctx.fillText(ds(),24,36);ctx.fillText('🔋 65%',W-140,36);
+  // Bottom brand bar
+  ctx.fillStyle=c;ctx.globalAlpha=0.6;ctx.fillRect(0,H-44,W,44);ctx.globalAlpha=1;
+  ctx.fillStyle='#000';ctx.font='bold 16px "Courier New",monospace';
+  ctx.fillText(inp.id,30,H-16);ctx.fillText(new Date().getFullYear()+'',W*0.4,H-16);ctx.fillText('HS',W*0.6,H-16);ctx.fillText('COLLECTION',W*0.75,H-16);
+  drawScanlines(ctx,0,0,W,H,'rgba(0,255,0,0.015)',3);
+}
+
+function exportPNG(){if(!sourceImg)return;const a=document.createElement('a');a.download=`lookbook-${Date.now()}.png`;a.href=canvas.toDataURL('image/png');a.click();}
+</script>
+</body>
+</html>
